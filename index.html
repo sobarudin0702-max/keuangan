@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catatan Keuangan Digital v9</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen py-6 px-4">
+
+    <div class="max-w-4xl mx-auto">
+        <div class="bg-blue-600 text-white p-6 rounded-t-xl shadow-md text-center">
+            <h1 class="text-2xl font-bold">Pencatatan Keuangan Harian</h1>
+            <p class="text-sm opacity-90 mt-1">PIN Aksi: 234</p>
+        </div>
+
+        <div class="bg-white p-6 shadow-md border-b border-gray-200">
+            <form id="financeForm" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <input type="hidden" id="editIndex" value="-1">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Tanggal</label>
+                    <input type="date" id="tanggal" required class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Keterangan (Manual)</label>
+                    <input type="text" id="keterangan" placeholder="Cth: Gajian / Makan" required class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Uang Masuk (Rp)</label>
+                    <input type="number" id="masuk" placeholder="0" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Uang Keluar (Rp)</label>
+                    <input type="number" id="keluar" placeholder="0" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="md:col-span-4 flex flex-col sm:flex-row gap-2 justify-between mt-2">
+                    <button type="button" id="btnDownload" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition shadow-sm text-sm">
+                        📥 Download File Excel/Sheets
+                    </button>
+                    <button type="submit" id="btnSubmit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-md transition shadow-sm text-sm">
+                        + Tambah Transaksi
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-white px-6 pt-4 flex justify-end">
+            <button type="button" id="toggleAksiBtn" class="bg-gray-700 hover:bg-gray-800 text-white font-semibold py-1.5 px-4 rounded-full text-xs transition flex items-center gap-1.5 shadow-sm">
+                <span id="lockIcon">🔒</span> <span id="lockText">Buka Kunci Menu Aksi</span>
+            </button>
+        </div>
+
+        <div class="bg-white rounded-b-xl shadow-md overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-200 text-gray-700 uppercase text-xs tracking-wider">
+                        <th class="p-4 border-b border-gray-300">Tanggal</th>
+                        <th class="p-4 border-b border-gray-300">Keterangan</th>
+                        <th class="p-4 border-b border-gray-300 text-green-600">Masuk (+)</th>
+                        <th class="p-4 border-b border-gray-300 text-red-600">Keluar (-)</th>
+                        <th class="p-4 border-b border-gray-300 bg-blue-50 text-blue-700 font-bold">Saldo</th>
+                        <th id="thAksi" class="p-4 border-b border-gray-300 text-center hidden">Aksi</th>
+                    </tr>
+                </thead>
+                <tbody id="transactionList" class="divide-y divide-gray-100 text-sm text-gray-600"></tbody>
+            </table>
+            <div id="emptyState" class="p-8 text-center text-gray-400">
+                Belum ada transaksi. Silakan masukkan data di atas.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let transaksiData = JSON.parse(localStorage.getItem('keuangan_lokal')) || [];
+        let aksiTerbuka = false; 
+
+        const form = document.getElementById('financeForm');
+        const transactionList = document.getElementById('transactionList');
+        const emptyState = document.getElementById('emptyState');
+        const editIndexInput = document.getElementById('editIndex');
+        const btnSubmit = document.getElementById('btnSubmit');
+        const btnDownload = document.getElementById('btnDownload');
+        
+        const toggleAksiBtn = document.getElementById('toggleAksiBtn');
+        const thAksi = document.getElementById('thAksi');
+        const lockIcon = document.getElementById('lockIcon');
+        const lockText = document.getElementById('lockText');
+
+        function setTanggalHariIni() {
+            const hariIni = new Date();
+            const tahun = hariIni.getFullYear();
+            const bulan = String(hariIni.getMonth() + 1).padStart(2, '0');
+            const tanggal = String(hariIni.getDate()).padStart(2, '0');
+            document.getElementById('tanggal').value = `${tahun}-${bulan}-${tanggal}`;
+        }
+
+        function ubahKeTeksTanggal(stringTanggal) {
+            if (!stringTanggal) return "-";
+            const opsiTgl = { day: '2-digit', month: 'long', year: 'numeric' };
+            return new Date(stringTanggal).toLocaleDateString('id-ID', opsiTgl);
+        }
+
+        function parseTanggalLokal(stringTanggal) {
+            const [tahun, bulan, tanggal] = stringTanggal.split('-');
+            return new Date(tahun, bulan - 1, tanggal);
+        }
+
+        function formatRupiah(angka) {
+            if (angka === 0 || !angka) return "-";
+            return "Rp " + Number(angka).toLocaleString('id-ID');
+        }
+
+        function hitungUlangSaldo() {
+            let saldoRunning = 0;
+            transaksiData.forEach(item => {
+                saldoRunning = saldoRunning + item.masuk - item.keluar;
+                item.saldo = saldoRunning;
+            });
+            localStorage.setItem('keuangan_lokal', JSON.stringify(transaksiData));
+        }
+
+        toggleAksiBtn.addEventListener('click', function() {
+            if (!aksiTerbuka) {
+                const inputPassword = prompt("Masukkan password untuk membuka menu aksi (Edit/Hapus):");
+                
+                if (inputPassword === "234") {
+                    aksiTerbuka = true;
+                    thAksi.classList.remove('hidden');
+                    lockIcon.innerText = "🔓";
+                    lockText.innerText = "Sembunyikan/Kunci Aksi";
+                    toggleAksiBtn.className = "bg-amber-600 hover:bg-amber-700 text-white font-semibold py-1.5 px-4 rounded-full text-xs transition flex items-center gap-1.5 shadow-sm";
+                } else if (inputPassword !== null) {
+                    alert("Password Salah! Menu aksi tetap terkunci.");
+                }
+            } else {
+                aksiTerbuka = false;
+                thAksi.classList.add('hidden');
+                lockIcon.innerText = "🔒";
+                lockText.innerText = "Buka Kunci Menu Aksi";
+                toggleAksiBtn.className = "bg-gray-700 hover:bg-gray-800 text-white font-semibold py-1.5 px-4 rounded-full text-xs transition flex items-center gap-1.5 shadow-sm";
+            }
+            renderTable();
+        });
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const idx = parseInt(editIndexInput.value);
+            const tanggalVal = document.getElementById('tanggal').value;
+            const keteranganVal = document.getElementById('keterangan').value;
+            const masukVal = Number(document.getElementById('masuk').value) || 0;
+            const keluarVal = Number(document.getElementById('keluar').value) || 0;
+
+            const data = { tanggal: tanggalVal, keterangan: keteranganVal, masuk: masukVal, keluar: keluarVal, saldo: 0 };
+
+            if (idx === -1) {
+                transaksiData.push(data);
+            } else {
+                transaksiData[idx] = data;
+                editIndexInput.value = "-1";
+                btnSubmit.innerText = "+ Tambah Transaksi";
+                btnSubmit.className = "bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-md transition text-sm";
+            }
+
+            hitungUlangSaldo();
+            renderTable();
+
+            document.getElementById('keterangan').value = '';
+            document.getElementById('masuk').value = '';
+            document.getElementById('keluar').value = '';
+            
+            setTanggalHariIni();
+        });
+
+        function renderTable() {
+            if (transaksiData.length > 0) {
+                emptyState.className = 'hidden';
+            } else {
+                emptyState.className = 'p-8 text-center text-gray-400';
+            }
+
+            transactionList.innerHTML = '';
+
+            transaksiData.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.className = "hover:bg-gray-50 transition";
+                
+                let tdAksiHtml = aksiTerbuka ? `
+                    <td class="p-4 border-b border-gray-200 text-center flex justify-center gap-2">
+                        <button onclick="editData(${index})" class="bg-amber-500 hover:bg-amber-600 text-white text-xs py-1 px-3 rounded shadow-sm">Edit</button>
+                        <button onclick="hapusData(${index})" class="bg-red-500 hover:bg-red-600 text-white text-xs py-1 px-3 rounded shadow-sm">Hapus</button>
+                    </td>
+                ` : '';
+
+                row.innerHTML = `
+                    <td class="p-4 border-b border-gray-200 font-medium">${ubahKeTeksTanggal(parseTanggalLokal(item.tanggal))}</td>
+                    <td class="p-4 border-b border-gray-200">${item.keterangan}</td>
+                    <td class="p-4 border-b border-gray-200 text-green-600 font-semibold">${formatRupiah(item.masuk)}</td>
+                    <td class="p-4 border-b border-gray-200 text-red-600 font-semibold">${formatRupiah(item.keluar)}</td>
+                    <td class="p-4 border-b border-gray-200 bg-blue-50 text-blue-700 font-bold">${formatRupiah(item.saldo)}</td>
+                    ${tdAksiHtml}
+                `;
+                transactionList.appendChild(row);
+            });
+        }
+
+        window.hapusData = function(index) {
+            if (confirm("Apakah Anda yakin ingin menghapus transaksi ini?")) {
+                transaksiData.splice(index, 1);
+                hitungUlangSaldo();
+                renderTable();
+            }
+        }
+
+        window.editData = function(index) {
+            const item = transaksiData[index];
+            document.getElementById('tanggal').value = item.tanggal;
+            document.getElementById('keterangan').value = item.keterangan;
+            document.getElementById('masuk').value = item.masuk;
+            document.getElementById('keluar').value = item.keluar;
+            
+            editIndexInput.value = index;
+            btnSubmit.innerText = "💾 Simpan Perubahan";
+            btnSubmit.className = "bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-6 rounded-md transition text-sm";
+        }
+
+        // ==========================================
+        // PERBAIKAN UTAMA UNTUK DUKUNGAN VERSI APK Android
+        // ==========================================
+        btnDownload.addEventListener('click', function() {
+            if (transaksiData.length === 0) {
+                alert("Belum ada data untuk di-download.");
+                return;
+            }
+
+            const excelRows = transaksiData.map(item => {
+                return {
+                    "Tanggal": ubahKeTeksTanggal(parseTanggalLokal(item.tanggal)),
+                    "Keterangan": item.keterangan,
+                    "Uang Masuk": item.masuk,
+                    "Uang Keluar": item.keluar,
+                    "Sisa Saldo": item.saldo
+                }
+            });
+
+            const worksheet = XLSX.utils.json_to_sheet(excelRows);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan Keuangan");
+            
+            // Mengubah file Excel menjadi binary data string
+            const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'binary' });
+            
+            // Konversi binary string menjadi format ArrayBuffer khusus
+            function s2ab(s) {
+                const buf = new ArrayBuffer(s.length);
+                const view = new Uint8Array(buf);
+                for (let i=0; i<s.length; i++) view[i] = s.charCodeAt(i) & 0xFF;
+                return buf;
+            }
+            
+            // Membungkus data dalam objek BLOB (Binary Large Object)
+            const dataBlob = new Blob([s2ab(excelBuffer)], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+            
+            // Membuat elemen link bayangan secara paksa agar browser/APK mengesampingkan blokir
+            const linkDownload = document.createElement("a");
+            linkDownload.href = URL.createObjectURL(dataBlob);
+            linkDownload.download = "LaporanKeuanganSaya.xlsx"; // Nama file sederhana tanpa simbol rumit
+            
+            document.body.appendChild(linkDownload);
+            linkDownload.click(); // Memicu klik paksa untuk mendownload
+            document.body.removeChild(linkDownload);
+        });
+
+        setTanggalHariIni();
+        renderTable();
+    </script>
+</body>
+</html>
